@@ -1,21 +1,15 @@
 package clases;
-
-import java.awt.Color;
-import java.awt.Graphics;
-import java.awt.Rectangle;
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import javax.imageio.ImageIO;
-import javax.swing.ImageIcon;
-import javax.swing.JFrame;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.Timer;
 
 public class GamePanel extends JPanel {
     private static final long serialVersionUID = 1L;
@@ -35,6 +29,8 @@ public class GamePanel extends JPanel {
     private static final int BOSS_MOVE_INTERVAL = 100;
     private static final int ENEMY_WIDTH = 150;
     private static final int ENEMY_HEIGHT = 100;
+    private static final int HEART_SIZE = 30;
+    private static final int HEART_FALL_SPEED = 5;
 
     private ImageIcon backgroundGif;
     private BufferedImage heartImage;
@@ -51,10 +47,13 @@ public class GamePanel extends JPanel {
     private boolean canShoot;
     private boolean isShooting;
     private int enemyHealth;
-    private int playerHits = 0;
+    private int playerLives = 3;
+    private int enemyHitCount = 0;
     private boolean isGameOver = false;
+    private boolean hasWon = false;
     private List<Rectangle> projectiles;
     private List<Rectangle> enemyProjectiles;
+    private List<Rectangle> hearts;
     private BossEnemy bossEnemy;
     private JFrame parentFrame;
 
@@ -67,9 +66,10 @@ public class GamePanel extends JPanel {
         isShooting = false;
         projectiles = new ArrayList<>();
         enemyProjectiles = new ArrayList<>();
+        hearts = new ArrayList<>();
         enemyHealth = ENEMY_HEALTH;
 
-        // Cargar las imágenes del corazón, del jugador, bala del jugador, bala del enemigo y del jefe final
+        // Cargar las imágenes
         try {
             heartImage = ImageIO.read(getClass().getClassLoader().getResource("resources/corazon.png"));
             playerImage = ImageIO.read(getClass().getClassLoader().getResource("resources/player.png"));
@@ -88,17 +88,22 @@ public class GamePanel extends JPanel {
         gameTimer = new Timer(10, new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (moveDirection != 0) {
-                    moveSquare(moveDirection);
+                if (!isGameOver && !hasWon) {
+                    if (moveDirection != 0) {
+                        moveSquare(moveDirection);
+                    }
+                    if (isShooting) {
+                        shootProjectile();
+                    }
+                    updateProjectiles();
+                    updateEnemyProjectiles();
+                    if (bossEnemy != null) {
+                        moveBossEnemy();
+                        checkCollisions();
+                    }
+                    updateHearts();
+                    repaint();
                 }
-                if (isShooting) {
-                    shootProjectile();
-                }
-                updateProjectiles();
-                updateEnemyProjectiles();
-                moveBossEnemy();
-                checkCollisions();
-                repaint();
             }
         });
         gameTimer.start();
@@ -113,7 +118,9 @@ public class GamePanel extends JPanel {
         enemyShootTimer = new Timer(ENEMY_SHOOT_INTERVAL, new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                shootEnemyProjectile();
+                if (!isGameOver && !hasWon && bossEnemy != null) {
+                    shootEnemyProjectile();
+                }
             }
         });
         enemyShootTimer.start();
@@ -122,6 +129,7 @@ public class GamePanel extends JPanel {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (bossEnemy != null && bossEnemy.health <= ENEMY_HEALTH / 2) {
+                    bossMoveTimer.start();
                     bossEnemy.y += bossEnemy.speed;
                     if (bossEnemy.y > GAME_HEIGHT / 2 - bossEnemy.height / 2) {
                         bossEnemy.y = GAME_HEIGHT / 2 - bossEnemy.height / 2;
@@ -165,7 +173,6 @@ public class GamePanel extends JPanel {
 
     private void moveSquare(int dx) {
         squareX += dx;
-        // Limitar el movimiento a los bordes izquierdo y derecho
         if (squareX < 0) {
             squareX = 0;
         } else if (squareX > GAME_WIDTH - WIDTH_SIZE) {
@@ -221,10 +228,15 @@ public class GamePanel extends JPanel {
             }
 
             bossEnemy.x += bossEnemy.direction * ENEMY_SPEED;
-            // Limitar el movimiento del jefe a los bordes izquierdo y derecho
             if (bossEnemy.x <= 0 || bossEnemy.x + ENEMY_WIDTH >= GAME_WIDTH) {
                 bossEnemy.direction *= -1;
             }
+        }
+    }
+
+    private void updateHearts() {
+        for (Rectangle heart : hearts) {
+            heart.y += HEART_FALL_SPEED;
         }
     }
 
@@ -236,76 +248,98 @@ public class GamePanel extends JPanel {
                     projectiles.remove(i);
                     i--;
                     bossEnemy.health--;
+                    enemyHitCount++;
+                    if (enemyHitCount % 15 == 0) {
+                        int heartX = bossEnemy.x + (ENEMY_WIDTH - HEART_SIZE) / 2;
+                        int heartY = bossEnemy.y + ENEMY_HEIGHT;
+                        hearts.add(new Rectangle(heartX, heartY, HEART_SIZE, HEART_SIZE));
+                    }
                     if (bossEnemy.health <= 0) {
                         bossEnemy = null;
-                        enemyShootTimer.stop();
-                        JOptionPane.showMessageDialog(this, "Felicidades! Has ganado", "Victoria", JOptionPane.INFORMATION_MESSAGE);
-                        parentFrame.dispose(); // Cerrar el JFrame
+                        hasWon = true; // Fin del juego
+                        break;
                     }
                 }
             }
-        }
 
-        for (int i = 0; i < enemyProjectiles.size(); i++) {
-            Rectangle projectile = enemyProjectiles.get(i);
-            if (projectile.intersects(new Rectangle(squareX, SQUARE_Y_POSITION, WIDTH_SIZE, SQUARE_SIZE))) {
-                enemyProjectiles.remove(i);
-                i--;
-                playerHits++;
-                if (playerHits >= MAX_HITS) {
-                    gameOver();
+            for (int i = 0; i < enemyProjectiles.size(); i++) {
+                Rectangle projectile = enemyProjectiles.get(i);
+                if (projectile.intersects(new Rectangle(squareX, SQUARE_Y_POSITION, WIDTH_SIZE, WIDTH_SIZE))) {
+                    enemyProjectiles.remove(i);
+                    i--;
+                    playerLives--;
+                    if (playerLives <= 0) {
+                        isGameOver = true; // Fin del juego
+                        break;
+                    }
+                }
+            }
+
+            for (int i = 0; i < hearts.size(); i++) {
+                Rectangle heart = hearts.get(i);
+                if (heart.intersects(new Rectangle(squareX, SQUARE_Y_POSITION, WIDTH_SIZE, WIDTH_SIZE))) {
+                    hearts.remove(i);
+                    i--;
+                    playerLives++;
                 }
             }
         }
-    }
-
-    private void gameOver() {
-        JOptionPane.showMessageDialog(this, "¡Has perdido!", "Fin del juego", JOptionPane.INFORMATION_MESSAGE);
-        parentFrame.dispose(); // Cerrar el JFrame
     }
 
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        g.drawImage(backgroundGif.getImage(), 0, 0, getWidth(), getHeight(), null);
-        g.setColor(Color.GREEN);
-        g.drawImage(playerImage, squareX, SQUARE_Y_POSITION, WIDTH_SIZE, SQUARE_SIZE, null);
+        if (backgroundGif != null) {
+            g.drawImage(backgroundGif.getImage(), 0, 0, GAME_WIDTH, GAME_HEIGHT, this);
+        }
+        g.drawImage(playerImage, squareX, SQUARE_Y_POSITION, SQUARE_SIZE, SQUARE_SIZE, this);
 
-        if (bossEnemy != null) {
-            g.drawImage(bossImage, bossEnemy.x, bossEnemy.y, bossEnemy.width, bossEnemy.height, null);
+        for (Rectangle projectile : projectiles) {
+            g.drawImage(playerBulletImage, projectile.x, projectile.y, PROJECTILE_SIZE, PROJECTILE_SIZE, this);
         }
 
-        g.setColor(Color.WHITE);
-        for (Rectangle projectile : projectiles) {
-            g.drawImage(playerBulletImage, projectile.x, projectile.y, projectile.width, projectile.height, null);
+        if (bossEnemy != null) {
+            g.drawImage(bossImage, bossEnemy.x, bossEnemy.y, ENEMY_WIDTH, ENEMY_HEIGHT, this);
         }
 
         for (Rectangle projectile : enemyProjectiles) {
-            g.drawImage(enemyBulletImage, projectile.x, projectile.y, projectile.width, projectile.height, null);
+            g.drawImage(enemyBulletImage, projectile.x, projectile.y, ENEMY_PROJECTILE_SIZE, ENEMY_PROJECTILE_SIZE, this);
         }
 
-        // Dibujar las vidas restantes como corazones
-        for (int i = 0; i < MAX_HITS - playerHits; i++) {
-            int heartX = GAME_WIDTH - (i + 1) * 40;
-            int heartY = 10;
-            g.drawImage(heartImage, heartX, heartY, 30, 30, null);
+        for (Rectangle heart : hearts) {
+            g.drawImage(heartImage, heart.x, heart.y, HEART_SIZE, HEART_SIZE, this);
+        }
+
+        // Mostrar vidas como corazones en la esquina superior izquierda
+        g.setColor(Color.WHITE);
+        for (int i = 0; i < playerLives; i++) {
+            g.drawImage(heartImage, 10 + i * (HEART_SIZE + 5), 10, HEART_SIZE, HEART_SIZE, this);
+        }
+
+        if (isGameOver) {
+            g.setColor(Color.RED);
+            g.setFont(new Font("Arial", Font.BOLD, 50));
+            g.drawString("GAME OVER", GAME_WIDTH / 4, GAME_HEIGHT / 2);
+        }
+
+        if (hasWon) {
+            g.setColor(Color.GREEN);
+            g.setFont(new Font("Arial", Font.BOLD, 50));
+            g.drawString("¡HAS GANADO!", GAME_WIDTH / 4, GAME_HEIGHT / 2);
         }
     }
 
-    // Clase interna para representar al BossEnemy
     private class BossEnemy extends Rectangle {
         private static final long serialVersionUID = 1L;
-        int health;
-        int speed;
-        int direction;
-        boolean hasMovedToMid;
+        private int health;
+        private int speed;
+        private int direction = 1;
+        private boolean hasMovedToMid = false;
 
         public BossEnemy(int x, int y, int width, int height, int speed) {
             super(x, y, width, height);
             this.health = ENEMY_HEALTH;
             this.speed = speed;
-            this.direction = 1;
-            this.hasMovedToMid = false;
         }
     }
 }
